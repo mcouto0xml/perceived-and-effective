@@ -8,13 +8,15 @@ from sqlalchemy.orm import relationship
 
 from src.data.models.base import Base, TimestampMixin
 
-class Users(Base, TimestampMixin):
-    """A user that is using the plataform"""
 
-    __table_name__ = "users"
+class Users(Base, TimestampMixin):
+    """A user that is using the platform"""
+
+    __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String, nullable=True)
-    password = Column(String, nullable=True)
-    is_manager = Column(Boolean, nullable=False)
-    
+    email = Column(String, nullable=False, unique=True)
+    password = Column(String, nullable=False)
+    is_manager = Column(Boolean, nullable=False, default=False)
+
+    appraisals = relationship("Appraisals", back_populates="user")

@@ -2,23 +2,27 @@
 
 import uuid
 
-from sqlalchemy import Integer, Column, ForeingKey, String
+from sqlalchemy import Integer, Column, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from src.data.models.base import Base, TimestampMixin
 
-class Tasks(Base, TimestampMixin):
-    """A single task from some project"""
 
-    __table_name__ = "tasks"
+class Tasks(Base, TimestampMixin):
+    """A single task synced from GitLab"""
+
+    __tablename__ = "tasks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    effective = Column(Integer, nullable=False)
-    description = Column(String, nullable=False)
+    gitlab_issue_id = Column(Integer, nullable=False, unique=True)
+    gitlab_project_id = Column(Integer, nullable=False)
+    gitlab_iid = Column(Integer, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
     url = Column(String, nullable=True)
-    user_id = Column(UUID(as_uuid=True), ForeingKey("user.id"), nullable=False)
-    project_id = Column(UUID(as_uuid=True), ForeingKey("project.id"), nullable=False)
+    effective = Column(Integer, nullable=True)
+    explanation = Column(String, nullable=True)
 
-    user_id = relationship("Users", back_populates="tasks")
-    project = relationship("Projects", back_populates="tasks")
+    appraisals = relationship("Appraisals", back_populates="task")
+    recommendations = relationship("Recommendations", back_populates="task")
