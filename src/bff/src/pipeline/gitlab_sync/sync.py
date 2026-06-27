@@ -23,6 +23,7 @@ from src.data.models.tasks import Tasks
 logger = logging.getLogger(__name__)
 
 DIVERGENCE_THRESHOLD = 4
+MAX_EFFECTIVE_PER_RUN = 3
 
 
 def _gitlab_headers() -> dict:
@@ -99,32 +100,36 @@ def _upsert_task(db: Session, issue: dict) -> Tasks:
 def run_sync() -> None:
     logger.info("Starting GitLab sync")
     try:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=120) as client:
             issues = _fetch_gitlab_issues(client)
             logger.info("Fetched %d open issues from GitLab", len(issues))
 
             with SessionLocal() as db:
+                effective_remaining = MAX_EFFECTIVE_PER_RUN
                 for issue in issues:
-                    _process_issue(db, client, issue)
+                    effective_remaining = _process_issue(db, client, issue, effective_remaining)
                 db.commit()
 
     except Exception:
         logger.exception("GitLab sync failed")
 
 
-def _process_issue(db: Session, client: httpx.Client, issue: dict) -> None:
+def _process_issue(db: Session, client: httpx.Client, issue: dict, effective_remaining: int) -> int:
     task = _upsert_task(db, issue)
 
     if task.effective is None:
+        if effective_remaining <= 0:
+            return 0
         try:
             effective_value, explanation = _call_effective_agent(client, task)
             task.effective = effective_value
             task.explanation = explanation
             db.flush()
             logger.info("Task %s effective=%d", task.name, effective_value)
+            effective_remaining -= 1
         except Exception:
             logger.exception("Effective agent call failed for task %s", task.gitlab_issue_id)
-            return
+            return effective_remaining
 
     appraisals = db.query(Appraisals).filter(Appraisals.task_id == task.id).all()
     for appraisal in appraisals:
@@ -133,6 +138,8 @@ def _process_issue(db: Session, client: httpx.Client, issue: dict) -> None:
 
         if abs(appraisal.perceived - task.effective) > DIVERGENCE_THRESHOLD:
             _generate_recommendation(db, client, task, appraisal)
+
+    return effective_remaining
 
 
 def _generate_recommendation(

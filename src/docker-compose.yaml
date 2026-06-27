@@ -1,0 +1,56 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: perceived_and_effective
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  agents:
+    build:
+      context: ./agents
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/docs || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bff:
+    build:
+      context: ./bff
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agents:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/perceived_and_effective
+      EFFECTIVE_AGENT_URL: http://agents:8001/appraisal
+      RECOMMENDATION_AGENT_URL: http://agents:8001/recommendation
+      GITLAB_URL: ${GITLAB_URL:-https://gitlab.com}
+      GITLAB_TOKEN: ${GITLAB_TOKEN}
+      GITLAB_PROJECT_ID: ${GITLAB_PROJECT_ID:-0}
+      POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-1}
+
+volumes:
+  postgres_data:

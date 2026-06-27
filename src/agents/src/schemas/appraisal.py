@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class AppraisalRequest(BaseModel):
     task_id: UUID
     name: str
-    description: str
+    description: str | None = None
 
 
 class AppraisalResponse(BaseModel):

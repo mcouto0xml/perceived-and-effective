@@ -20,7 +20,7 @@ def get_unevaluated_tasks(user_id: UUID, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     evaluated_task_ids = (
-        db.query(Appraisals.task_id).filter(Appraisals.user_id == user_id).subquery()
+        db.query(Appraisals.task_id).filter(Appraisals.user_id == user_id).scalar_subquery()
     )
     tasks = db.query(Tasks).filter(Tasks.id.not_in(evaluated_task_ids)).all()
     return [TaskResponse(id=t.id, name=t.name, description=t.description, url=t.url) for t in tasks]

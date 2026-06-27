@@ -6,6 +6,7 @@ separate paragraphs in the final response.
 """
 
 import asyncio
+import logging
 import uuid as uuid_module
 
 from google.adk.agents import LlmAgent
@@ -17,7 +18,11 @@ from pydantic import BaseModel
 from src.core.config import settings
 from src.prompts import EFFECTIVE_AGENT_A_SYSTEM_PROMPT, EFFECTIVE_AGENT_B_SYSTEM_PROMPT
 
+logger = logging.getLogger(__name__)
+
 _APP_NAME = "effective-agents"
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 60.0
 
 
 class _EffectiveOutput(BaseModel):
@@ -55,41 +60,51 @@ _runner_b = Runner(
 
 
 async def _run(runner: Runner, message: str) -> _EffectiveOutput:
-    session_id = str(uuid_module.uuid4())
+    for attempt in range(_MAX_RETRIES):
+        session_id = str(uuid_module.uuid4())
 
-    await _session_service.create_session(
-        app_name=_APP_NAME,
-        user_id="system",
-        session_id=session_id,
-    )
+        await _session_service.create_session(
+            app_name=_APP_NAME,
+            user_id="system",
+            session_id=session_id,
+        )
 
-    async for _ in runner.run_async(
-        user_id="system",
-        session_id=session_id,
-        new_message=types.Content(role="user", parts=[types.Part(text=message)]),
-    ):
-        pass
+        try:
+            async for _ in runner.run_async(
+                user_id="system",
+                session_id=session_id,
+                new_message=types.Content(role="user", parts=[types.Part(text=message)]),
+            ):
+                pass
+        except Exception as exc:
+            if "429" in str(exc) and attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_BASE_DELAY * (2**attempt)
+                logger.warning("Rate limited (429), retrying in %.0fs (attempt %d/%d)", delay, attempt + 1, _MAX_RETRIES)
+                await asyncio.sleep(delay)
+                continue
+            raise
 
-    session = await _session_service.get_session(
-        app_name=_APP_NAME,
-        user_id="system",
-        session_id=session_id,
-    )
+        session = await _session_service.get_session(
+            app_name=_APP_NAME,
+            user_id="system",
+            session_id=session_id,
+        )
 
-    if session is None or "result" not in session.state:
-        raise RuntimeError("Effective agent did not return a structured result")
+        if session is None or "result" not in session.state:
+            raise RuntimeError("Effective agent did not return a structured result")
 
-    return _EffectiveOutput.model_validate(session.state["result"])
+        return _EffectiveOutput.model_validate(session.state["result"])
+
+    raise RuntimeError("Effective agent exhausted all retries")
 
 
-async def run_effective_agents(task_id: str, name: str, description: str) -> _EffectiveOutput:
-    """Run both effective agents concurrently and merge their outputs."""
+async def run_effective_agents(task_id: str, name: str, description: str | None) -> _EffectiveOutput:
+    """Run both effective agents sequentially and merge their outputs."""
     message = f"Task ID: {task_id}\nName: {name}\nDescription: {description or ''}"
 
-    result_a, result_b = await asyncio.gather(
-        _run(_runner_a, message),
-        _run(_runner_b, message),
-    )
+    result_a = await _run(_runner_a, message)
+    await asyncio.sleep(10)
+    result_b = await _run(_runner_b, message)
 
     avg_value = round((result_a.effective_value + result_b.effective_value) / 2)
     combined_explanation = f"{result_a.explanation}\n\n{result_b.explanation}"
