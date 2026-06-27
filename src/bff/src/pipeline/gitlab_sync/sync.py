@@ -22,7 +22,7 @@ from src.data.models.tasks import Tasks
 
 logger = logging.getLogger(__name__)
 
-DIVERGENCE_THRESHOLD = 4
+DIVERGENCE_THRESHOLD = 3
 MAX_EFFECTIVE_PER_RUN = 3
 
 
@@ -37,12 +37,16 @@ def _fetch_gitlab_issues(client: httpx.Client) -> list[dict]:
     return response.json()
 
 
-def _post_gitlab_comment(client: httpx.Client, iid: int, body: str) -> None:
+def _post_gitlab_comment(client: httpx.Client, iid: int, body: str) -> dict:
     url = (
         f"{settings.gitlab_url}/api/v4/projects/{settings.gitlab_project_id}"
         f"/issues/{iid}/notes"
     )
-    client.post(url, json={"body": body}, headers=_gitlab_headers()).raise_for_status()
+    logger.info("Posting GitLab comment → project=%s issue_iid=%d url=%s", settings.gitlab_project_id, iid, url)
+    response = client.post(url, json={"body": body}, headers=_gitlab_headers())
+    logger.info("GitLab comment response: status=%d body=%.200s", response.status_code, response.text)
+    response.raise_for_status()
+    return response.json()
 
 
 def _call_effective_agent(client: httpx.Client, task: Tasks) -> tuple[int, str | None]:
@@ -145,8 +149,16 @@ def _process_issue(db: Session, client: httpx.Client, issue: dict, effective_rem
 def _generate_recommendation(
     db: Session, client: httpx.Client, task: Tasks, appraisal: Appraisals
 ) -> None:
+    logger.info(
+        "Generating recommendation — task=%s (iid=%d) appraisal=%s perceived=%d effective=%d diff=%d",
+        task.name, task.gitlab_iid, appraisal.id,
+        appraisal.perceived, task.effective,
+        abs(appraisal.perceived - task.effective),
+    )
+
     try:
         recommendation_text = _call_recommendation_agent(client, task, appraisal)
+        logger.info("Recommendation agent returned: %.200s", recommendation_text)
     except Exception:
         logger.exception("Recommendation agent call failed for appraisal %s", appraisal.id)
         return
@@ -158,12 +170,19 @@ def _generate_recommendation(
     )
     db.add(recommendation)
     db.flush()
+    logger.info("Recommendation saved to DB — id=%s", recommendation.id)
 
     try:
         comment = (
             f"**Recommendation** (perceived: {appraisal.perceived}, "
             f"effective: {task.effective})\n\n{recommendation_text}"
         )
-        _post_gitlab_comment(client, task.gitlab_iid, comment)
+        note = _post_gitlab_comment(client, task.gitlab_iid, comment)
+        logger.info(
+            "GitLab comment posted successfully — note_id=%s url=%s",
+            note.get("id"), note.get("noteable_iid"),
+        )
     except Exception:
-        logger.exception("Failed to post GitLab comment for task %s", task.gitlab_issue_id)
+        logger.exception(
+            "Failed to post GitLab comment for task %s (iid=%d)", task.gitlab_issue_id, task.gitlab_iid
+        )
