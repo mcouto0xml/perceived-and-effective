@@ -1,0 +1,19 @@
+[project]
+name = "api"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "murilo-oliveira-core",email = "murilo.oliveira@coreai.com.br"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "sqlalchemy (>=2.0.51,<3.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "api", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
