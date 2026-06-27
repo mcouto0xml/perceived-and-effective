@@ -62,6 +62,7 @@ def _call_recommendation_agent(client: httpx.Client, task: Tasks, appraisal: App
     response = client.post(
         settings.recommendation_agent_url,
         json={
+            "task_id": str(task.id),
             "effective": task.effective,
             "effective_explanation": task.explanation,
             "perceived": appraisal.perceived,
